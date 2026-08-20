@@ -805,6 +805,7 @@ async function loadData(){
         Commentaire: r[7]||"",
         DateAjout: r[8]||"",
         DateMaj: r[9]||"",
+        GenreRaw: r[10]||"",
         Tags: mergeGenreTags(r[10], r[11]),
         Origine: r[12]||"",
         Resume: r[13]||"",
@@ -1318,7 +1319,11 @@ async function runImport(csvRows){
         const mergedTags = mergeGenreTags(c.genre, c.tags);
         const newKey = mergedTags.map(t=>t.toLowerCase()).sort().join("|");
         const oldKey = existing.Tags.map(t=>t.toLowerCase()).sort().join("|");
-        if(newKey !== oldKey){ existing.Tags = mergedTags; changed = true; }
+        if(newKey !== oldKey || existing.GenreRaw){
+          existing.Tags = mergedTags;
+          existing.GenreRaw = "";
+          changed = true;
+        }
       }
       if(!existing.Origine && c.origine){ existing.Origine = c.origine; changed = true; }
       if(!existing.Resume && c.resume){ existing.Resume = c.resume; changed = true; }
