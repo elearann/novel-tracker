@@ -539,7 +539,7 @@
   /* ===== Mobile: vue cartes empilées ===== */
   @media (max-width: 720px){
     .shell{ padding: 0 12px 40px; }
-    .layout{ flex-direction: column; gap: 16px; }
+    .layout{ flex-direction: column; gap: 16px; align-items: stretch; }
     .sidebar{
       width: 100%;
       position: static;
@@ -547,7 +547,7 @@
       margin-bottom: 12px;
       order: 1;
     }
-    .main{ order: 2; }
+    .main{ order: 2; width: 100%; }
     #table-wrap{ overflow-x: visible; }
     table{
       display: block;
