@@ -153,6 +153,22 @@
     border-radius:6px;
     width:100%;
   }
+  .search-wrap{ position:relative; width:100%; }
+  .search-wrap input{ padding-right:28px; }
+  .search-clear{
+    position:absolute;
+    right:8px;
+    top:50%;
+    transform:translateY(-50%);
+    cursor:pointer;
+    color: var(--ink-faint);
+    font-size:1.05rem;
+    line-height:1;
+    padding:2px 4px;
+    display:none;
+  }
+  .search-clear:hover{ color: var(--ink); }
+  .search-clear.show{ display:block; }
   #controls label.fav-toggle{
     font-size:0.8rem;
     color: var(--ink-soft);
@@ -258,8 +274,47 @@
   tbody tr.data-row{
     border-bottom:1px solid var(--line-soft);
     cursor:pointer;
+    position:relative;
   }
   tbody tr.data-row:hover{ background: #fbfbfa; }
+  .row-badge{
+    position:absolute;
+    right:10px;
+    top:50%;
+    transform:translateY(-50%);
+    font-size:0.72rem;
+    font-weight:600;
+    padding:3px 9px;
+    border-radius:20px;
+    background:#fff;
+    box-shadow:0 1px 5px rgba(0,0,0,0.14);
+    opacity:0;
+    transition:opacity .2s;
+    pointer-events:none;
+    z-index:5;
+    white-space:nowrap;
+  }
+  .row-badge.show{ opacity:1; }
+  .row-badge.ok{ color: var(--accent); border:1px solid var(--accent-soft); }
+  .row-badge.err{ color: var(--danger); border:1px solid var(--danger); }
+  .detail-badge{
+    position:absolute;
+    top:10px; right:52px;
+    font-size:0.72rem;
+    font-weight:600;
+    padding:3px 9px;
+    border-radius:20px;
+    background:#fff;
+    box-shadow:0 1px 5px rgba(0,0,0,0.14);
+    opacity:0;
+    transition:opacity .2s;
+    pointer-events:none;
+    z-index:5;
+    white-space:nowrap;
+  }
+  .detail-badge.show{ opacity:1; }
+  .detail-badge.ok{ color: var(--accent); border:1px solid var(--accent-soft); }
+  .detail-badge.err{ color: var(--danger); border:1px solid var(--danger); }
   tbody tr.detail-row td{
     background:#fbfbf9;
     padding:0;
@@ -575,6 +630,7 @@
           </thead>
           <tbody id="grid-body"></tbody>
         </table>
+        <datalist id="genre-datalist"></datalist>
         <datalist id="tags-datalist"></datalist>
         <datalist id="origine-datalist"></datalist>
       </div>
@@ -584,7 +640,10 @@
     <div class="sidebar" id="filters-sidebar" style="display:none;">
       <div class="sidebar-block">
         <div id="controls">
-          <input type="text" id="search" placeholder="Chercher un titre...">
+          <div class="search-wrap">
+            <input type="text" id="search" placeholder="Chercher un titre...">
+            <span id="search-clear" class="search-clear">×</span>
+          </div>
           <select id="filter-status">
             <option value="">Tous les statuts</option>
             <option value="À lire">À lire</option>
@@ -631,6 +690,19 @@
       </div>
 
       <div class="sidebar-block">
+        <div id="genre-filter-bar">
+          <span class="tf-label">Genre</span>
+          <div class="mode-toggle">
+            <span id="genre-mode-and" class="active">ET</span><span id="genre-mode-or">OU</span>
+          </div>
+          <div id="genre-chips"></div>
+          <select id="genre-add">
+            <option value="">+ ajouter un genre</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="sidebar-block">
         <div id="import-bar" style="display:flex;flex-direction:column;gap:8px;">
           <span class="tf-label" style="font-size:0.7rem;text-transform:uppercase;letter-spacing:0.06em;color:var(--ink-faint);">Import NovelUpdates</span>
           <input type="file" id="import-file" accept=".csv" style="display:none;">
@@ -653,10 +725,13 @@ const SCOPES = "https://www.googleapis.com/auth/spreadsheets";
 let resolvedSheetName = null;
 let tokenClient;
 let accessToken = null;
+let tokenExpiresAt = 0;
 let rows = [];
 let openRowIndex = null;
 let selectedTags = [];
 let tagMode = 'and';
+let selectedGenres = [];
+let genreMode = 'and';
 
 const els = {
   signin: document.getElementById('btn-signin'),
@@ -668,12 +743,18 @@ const els = {
   tagAdd: document.getElementById('tag-add'),
   modeAnd: document.getElementById('mode-and'),
   modeOr: document.getElementById('mode-or'),
+  genreBar: document.getElementById('genre-filter-bar'),
+  genreChips: document.getElementById('genre-chips'),
+  genreAdd: document.getElementById('genre-add'),
+  genreModeAnd: document.getElementById('genre-mode-and'),
+  genreModeOr: document.getElementById('genre-mode-or'),
   countLine: document.getElementById('count-line'),
   table: document.getElementById('grid-table'),
   tbody: document.getElementById('grid-body'),
   empty: document.getElementById('empty-state'),
   setupNote: document.getElementById('setup-note'),
   search: document.getElementById('search'),
+  searchClear: document.getElementById('search-clear'),
   filterStatus: document.getElementById('filter-status'),
   filterOrigine: document.getElementById('filter-origine'),
   filterFav: document.getElementById('filter-fav'),
@@ -684,39 +765,6 @@ const els = {
   importBtn: document.getElementById('import-btn'),
   importResult: document.getElementById('import-result'),
 };
-
-// Formes canoniques pour les doublons Genre/Tags historiques (fusion)
-const CANONICAL_TAG_MAP = {
-  "bl": "Yaoi/BL",
-  "modern": "Modern Day",
-  "showbiz": "Showbiz/Entertainment Industry",
-  "regression": "Regression/Returnee",
-};
-
-function canonicalizeTag(t){
-  const key = t.trim().toLowerCase();
-  return CANONICAL_TAG_MAP[key] || t.trim();
-}
-
-// Fusionne une chaîne "genre" et une chaîne "tags" (format CSV "a, b, c") en une
-// liste unique, dédupliquée (insensible à la casse) et avec formes canoniques.
-function mergeGenreTags(genreStr, tagsStr){
-  const raw = [
-    ...String(genreStr||"").split(",").map(s=>s.trim()).filter(Boolean),
-    ...String(tagsStr||"").split(",").map(s=>s.trim()).filter(Boolean),
-  ];
-  const seen = new Set();
-  const result = [];
-  raw.forEach(t => {
-    const canon = canonicalizeTag(t);
-    const key = canon.toLowerCase();
-    if(!seen.has(key)){
-      seen.add(key);
-      result.push(canon);
-    }
-  });
-  return result;
-}
 
 function setStatus(msg, isError){
   els.status.textContent = msg || "";
@@ -740,17 +788,32 @@ window.addEventListener('load', () => {
     tokenClient = google.accounts.oauth2.initTokenClient({
       client_id: CLIENT_ID,
       scope: SCOPES,
-      callback: (resp) => {
-        if(resp.error){ setStatus("Connexion refusée.", true); return; }
-        accessToken = resp.access_token;
-        onSignedIn();
-      }
+      callback: () => {} // remplacé à chaque appel par requestToken()
     });
   }
 });
 
-els.signin.addEventListener('click', () => {
-  if(tokenClient) tokenClient.requestAccessToken({prompt:'consent'});
+function requestToken(prompt){
+  return new Promise((resolve, reject) => {
+    if(!tokenClient){ reject(new Error('Client OAuth non initialisé.')); return; }
+    tokenClient.callback = (resp) => {
+      if(resp.error){ reject(new Error(resp.error)); return; }
+      accessToken = resp.access_token;
+      // marge de sécurité de 60s avant l'expiration réelle
+      tokenExpiresAt = Date.now() + ((resp.expires_in || 3600) * 1000) - 60000;
+      resolve(accessToken);
+    };
+    tokenClient.requestAccessToken({ prompt });
+  });
+}
+
+els.signin.addEventListener('click', async () => {
+  try{
+    await requestToken('consent');
+    onSignedIn();
+  }catch(e){
+    setStatus("Connexion refusée.", true);
+  }
 });
 
 function onSignedIn(){
@@ -761,11 +824,28 @@ function onSignedIn(){
   loadData();
 }
 
-async function apiFetch(url, options={}){
+async function ensureFreshToken(){
+  if(!accessToken || Date.now() >= tokenExpiresAt){
+    try{
+      await requestToken(''); // renouvellement silencieux, sans popup
+    }catch(e){
+      document.getElementById('auth-bar').style.display = 'flex';
+      throw new Error('Session Google expirée, reconnecte-toi.');
+    }
+  }
+}
+
+async function apiFetch(url, options={}, _retried=false){
+  await ensureFreshToken();
   const res = await fetch(url, {
     ...options,
     headers: { ...(options.headers||{}), Authorization: `Bearer ${accessToken}` }
   });
+  if(res.status === 401 && !_retried){
+    // le token s'est révélé invalide malgré la vérification d'expiration : on retente une fois
+    await requestToken('');
+    return apiFetch(url, options, true);
+  }
   if(!res.ok){
     const t = await res.text();
     throw new Error(`API ${res.status}: ${t}`);
@@ -805,8 +885,9 @@ async function loadData(){
         Commentaire: r[7]||"",
         DateAjout: r[8]||"",
         DateMaj: r[9]||"",
-        GenreRaw: r[10]||"",
-        Tags: mergeGenreTags(r[10], r[11]),
+        Genre: r[10]||"",
+        GenreList: (r[10]||"").split(",").map(g=>g.trim()).filter(Boolean),
+        Tags: (r[11]||"").split(",").map(t=>t.trim()).filter(Boolean),
         Origine: r[12]||"",
         Resume: r[13]||"",
       });
@@ -832,6 +913,14 @@ function buildTagOptions(){
   els.filterOrigine.innerHTML = '<option value="">Toutes origines</option>' +
     sortedOrigines.map(o => `<option value="${escapeAttr(o)}">${escapeHtml(o)}</option>`).join('');
 
+  const genres = new Set();
+  rows.forEach(r => r.GenreList.forEach(g => genres.add(g)));
+  const sortedGenres = Array.from(genres).sort((a,b)=>a.localeCompare(b));
+  els.genreAdd.innerHTML = '<option value="">+ ajouter un genre</option>' +
+    sortedGenres.map(g => `<option value="${escapeAttr(g)}">${escapeHtml(g)}</option>`).join('');
+
+  const genreDatalist = document.getElementById('genre-datalist');
+  if(genreDatalist) genreDatalist.innerHTML = sortedGenres.map(g => `<option value="${escapeAttr(g)}">`).join('');
   const tagsDatalist = document.getElementById('tags-datalist');
   if(tagsDatalist) tagsDatalist.innerHTML = sorted.map(t => `<option value="${escapeAttr(t)}">`).join('');
   const origineDatalist = document.getElementById('origine-datalist');
@@ -852,12 +941,50 @@ function renderTagChips(){
   });
 }
 
+function renderGenreChips(){
+  els.genreChips.innerHTML = selectedGenres.map(g => `
+    <span class="tag-chip" data-genre="${escapeAttr(g)}">${escapeHtml(g)} <span class="x">×</span></span>
+  `).join('');
+  els.genreChips.querySelectorAll('.tag-chip .x').forEach(x => {
+    x.addEventListener('click', () => {
+      const genre = x.parentElement.dataset.genre;
+      selectedGenres = selectedGenres.filter(g => g !== genre);
+      renderGenreChips();
+      render();
+    });
+  });
+}
+
+els.genreAdd.addEventListener('change', () => {
+  const val = els.genreAdd.value;
+  if(val && !selectedGenres.includes(val)){
+    selectedGenres.push(val);
+    renderGenreChips();
+    render();
+  }
+  els.genreAdd.value = "";
+});
+
+els.genreModeAnd.addEventListener('click', () => {
+  genreMode = 'and';
+  els.genreModeAnd.classList.add('active');
+  els.genreModeOr.classList.remove('active');
+  render();
+});
+els.genreModeOr.addEventListener('click', () => {
+  genreMode = 'or';
+  els.genreModeOr.classList.add('active');
+  els.genreModeAnd.classList.remove('active');
+  render();
+});
+
 function activateTag(tag){
   if(!selectedTags.includes(tag)){
     selectedTags.push(tag);
     renderTagChips();
   }
   els.search.value = "";
+  updateSearchClear();
   render();
   els.tagBar.scrollIntoView({behavior:'smooth', block:'nearest'});
 }
@@ -897,6 +1024,13 @@ function render(){
     if(q && !r.Titre.toLowerCase().includes(q)) return false;
     if(st && r.Statut !== st) return false;
     if(origine && r.Origine !== origine) return false;
+    if(selectedGenres.length){
+      if(genreMode === 'and'){
+        if(!selectedGenres.every(g => r.GenreList.includes(g))) return false;
+      }else{
+        if(!selectedGenres.some(g => r.GenreList.includes(g))) return false;
+      }
+    }
     if(favOnly && !r.Favori) return false;
     if(minNote && (r.Note||0) < minNote) return false;
     if(selectedTags.length){
@@ -957,6 +1091,7 @@ function buildStars(container, value, onChange){
 function buildRow(r){
   const tr = document.createElement('tr');
   tr.className = 'data-row';
+  tr.setAttribute('data-row-index', r.rowIndex);
 
   const favTd = document.createElement('td');
   favTd.setAttribute('data-label', 'Favori');
@@ -1058,12 +1193,17 @@ function buildRow(r){
     render();
   });
 
+  const badge = document.createElement('span');
+  badge.className = 'row-badge';
+  tr.appendChild(badge);
+
   return tr;
 }
 
 function buildDetailRow(r){
   const tr = document.createElement('tr');
   tr.className = 'detail-row';
+  tr.setAttribute('data-row-index', r.rowIndex);
   const td = document.createElement('td');
   td.colSpan = 8;
 
@@ -1079,6 +1219,10 @@ function buildDetailRow(r){
     render();
   });
   inner.appendChild(closeBtn);
+
+  const detailBadge = document.createElement('span');
+  detailBadge.className = 'detail-badge';
+  inner.appendChild(detailBadge);
 
   const meta = document.createElement('div');
   meta.className = 'detail-meta';
@@ -1112,6 +1256,58 @@ function buildDetailRow(r){
   origineRow.appendChild(origineLabel);
   origineRow.appendChild(origineInput);
   inner.appendChild(origineRow);
+
+  // ----- Genre (édition, multi-valeurs) -----
+  const genreRow = document.createElement('div');
+  genreRow.className = 'edit-field';
+  const genreLabel = document.createElement('span');
+  genreLabel.className = 'edit-field-label';
+  genreLabel.textContent = 'Genre';
+  genreRow.appendChild(genreLabel);
+  const genreWrap = document.createElement('div');
+  genreWrap.className = 'editable-tags';
+  function renderGenreEditor(){
+    genreWrap.innerHTML = '';
+    r.GenreList.forEach(g => {
+      const pill = document.createElement('span');
+      pill.className = 'tag-pill-outline';
+      pill.innerHTML = `${escapeHtml(g)} <span class="tag-x">×</span>`;
+      pill.querySelector('.tag-x').addEventListener('click', (e) => {
+        e.stopPropagation();
+        r.GenreList = r.GenreList.filter(x => x !== g);
+        r.Genre = r.GenreList.join(", ");
+        renderGenreEditor();
+        saveRow(r);
+        buildTagOptions();
+      });
+      genreWrap.appendChild(pill);
+    });
+    const addInput = document.createElement('input');
+    addInput.type = 'text';
+    addInput.className = 'inline-add-input';
+    addInput.setAttribute('list', 'genre-datalist');
+    addInput.placeholder = '+ genre';
+    addInput.addEventListener('click', e => e.stopPropagation());
+    addInput.addEventListener('keydown', (e) => {
+      if(e.key === 'Enter'){
+        e.preventDefault();
+        const val = addInput.value.trim();
+        if(val && !r.GenreList.includes(val)){
+          r.GenreList.push(val);
+          r.Genre = r.GenreList.join(", ");
+          renderGenreEditor();
+          saveRow(r);
+          buildTagOptions();
+        } else {
+          addInput.value = "";
+        }
+      }
+    });
+    genreWrap.appendChild(addInput);
+  }
+  renderGenreEditor();
+  genreRow.appendChild(genreWrap);
+  inner.appendChild(genreRow);
 
   if(r.Resume){
     const p = document.createElement('p');
@@ -1180,13 +1376,31 @@ function buildDetailRow(r){
   return tr;
 }
 
+function flashRowBadge(rowIndex, ok){
+  const selectors = [
+    `tr.data-row[data-row-index="${rowIndex}"] .row-badge`,
+    `tr.detail-row[data-row-index="${rowIndex}"] .detail-badge`
+  ];
+  selectors.forEach(sel => {
+    const badge = els.tbody.querySelector(sel);
+    if(!badge) return;
+    badge.textContent = ok ? '✓ enregistré' : '✕ échec';
+    badge.classList.remove('ok', 'err', 'show');
+    void badge.offsetWidth; // force le reflow pour rejouer la transition
+    badge.classList.add(ok ? 'ok' : 'err');
+    badge.classList.add('show');
+    clearTimeout(badge._t);
+    badge._t = setTimeout(() => badge.classList.remove('show'), 1600);
+  });
+}
+
 async function saveRow(r){
   const now = new Date().toISOString().slice(0,10);
   r.DateMaj = now;
   const rowValues = [
     r.Titre, r.Lien, r.Statut, r.Favori ? "Oui" : "Non",
     r.ChapitreActuel, r.DernierChapitre, r.Note || "", r.Commentaire,
-    r.DateAjout, r.DateMaj, "", r.Tags.join(", "), r.Origine, r.Resume
+    r.DateAjout, r.DateMaj, r.Genre, r.Tags.join(", "), r.Origine, r.Resume
   ];
   const range = `${resolvedSheetName}!A${r.rowIndex}:N${r.rowIndex}`;
   const url = `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(range)}?valueInputOption=USER_ENTERED`;
@@ -1198,8 +1412,10 @@ async function saveRow(r){
     });
     showSaved();
     render();
+    flashRowBadge(r.rowIndex, true);
   }catch(e){
     setStatus("Erreur d'enregistrement : " + e.message, true);
+    flashRowBadge(r.rowIndex, false);
   }
 }
 
@@ -1216,7 +1432,17 @@ function formatDate(iso){
   return `${m[3]}/${m[2]}/${yy}`;
 }
 
-els.search.addEventListener('input', render);
+function updateSearchClear(){
+  els.searchClear.classList.toggle('show', els.search.value.length > 0);
+}
+
+els.search.addEventListener('input', () => { updateSearchClear(); render(); });
+els.searchClear.addEventListener('click', () => {
+  els.search.value = "";
+  updateSearchClear();
+  els.search.focus();
+  render();
+});
 els.filterStatus.addEventListener('change', render);
 els.filterOrigine.addEventListener('change', render);
 els.filterFav.addEventListener('change', render);
@@ -1312,28 +1538,18 @@ async function runImport(csvRows){
       if(mappedStatut && mappedStatut !== existing.Statut){ existing.Statut = mappedStatut; changed = true; }
       if(c.chapitre_actuel && c.chapitre_actuel !== existing.ChapitreActuel){ existing.ChapitreActuel = c.chapitre_actuel; changed = true; }
       if(c.dernier_connu && c.dernier_connu !== existing.DernierChapitre){ existing.DernierChapitre = c.dernier_connu; changed = true; }
-      // Champ fusionné Genre+Tags : on n'écrase que si le CSV apporte une valeur
-      // non-vide sur genre OU tags (jamais de vidage). Les imports NovelUpdates
-      // classiques n'ont pas ces colonnes donc ne touchent jamais à ce champ.
-      if(c.genre || c.tags){
-        const mergedTags = mergeGenreTags(c.genre, c.tags);
-        const newKey = mergedTags.map(t=>t.toLowerCase()).sort().join("|");
-        const oldKey = existing.Tags.map(t=>t.toLowerCase()).sort().join("|");
-        if(newKey !== oldKey || existing.GenreRaw){
-          existing.Tags = mergedTags;
-          existing.GenreRaw = "";
-          changed = true;
-        }
-      }
+      if(!existing.Genre && c.genre){ existing.Genre = c.genre; existing.GenreList = c.genre.split(",").map(g=>g.trim()).filter(Boolean); changed = true; }
+      if((!existing.Tags || !existing.Tags.length) && c.tags){ existing.Tags = c.tags.split(",").map(t=>t.trim()).filter(Boolean); changed = true; }
       if(!existing.Origine && c.origine){ existing.Origine = c.origine; changed = true; }
       if(!existing.Resume && c.resume){ existing.Resume = c.resume; changed = true; }
+      if(c.commentaire && c.commentaire.trim()){ existing.Commentaire = c.commentaire; changed = true; }
 
       if(changed){
         existing.DateMaj = today;
         const rowValues = [
           existing.Titre, existing.Lien, existing.Statut, existing.Favori ? "Oui" : "Non",
           existing.ChapitreActuel, existing.DernierChapitre, existing.Note || "", existing.Commentaire,
-          existing.DateAjout, existing.DateMaj, "", existing.Tags.join(", "), existing.Origine, existing.Resume
+          existing.DateAjout, existing.DateMaj, existing.Genre, existing.Tags.join(", "), existing.Origine, existing.Resume
         ];
         const range = `${resolvedSheetName}!A${existing.rowIndex}:N${existing.rowIndex}`;
         updatePayload.push({ range, values: [rowValues] });
@@ -1342,11 +1558,10 @@ async function runImport(csvRows){
         unchangedCount++;
       }
     } else {
-      const mergedTags = mergeGenreTags(c.genre, c.tags);
       appendRows.push([
         c.titre, lien, mappedStatut, "Non",
-        c.chapitre_actuel || "", c.dernier_connu || "", "", "",
-        today, today, "", mergedTags.join(", "), c.origine || "", c.resume || ""
+        c.chapitre_actuel || "", c.dernier_connu || "", "", c.commentaire || "",
+        today, today, c.genre || "", c.tags || "", c.origine || "", c.resume || ""
       ]);
       addedCount++;
     }
