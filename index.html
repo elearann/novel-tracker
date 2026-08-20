@@ -575,7 +575,6 @@
           </thead>
           <tbody id="grid-body"></tbody>
         </table>
-        <datalist id="genre-datalist"></datalist>
         <datalist id="tags-datalist"></datalist>
         <datalist id="origine-datalist"></datalist>
       </div>
@@ -632,19 +631,6 @@
       </div>
 
       <div class="sidebar-block">
-        <div id="genre-filter-bar">
-          <span class="tf-label">Genre</span>
-          <div class="mode-toggle">
-            <span id="genre-mode-and" class="active">ET</span><span id="genre-mode-or">OU</span>
-          </div>
-          <div id="genre-chips"></div>
-          <select id="genre-add">
-            <option value="">+ ajouter un genre</option>
-          </select>
-        </div>
-      </div>
-
-      <div class="sidebar-block">
         <div id="import-bar" style="display:flex;flex-direction:column;gap:8px;">
           <span class="tf-label" style="font-size:0.7rem;text-transform:uppercase;letter-spacing:0.06em;color:var(--ink-faint);">Import NovelUpdates</span>
           <input type="file" id="import-file" accept=".csv" style="display:none;">
@@ -671,8 +657,6 @@ let rows = [];
 let openRowIndex = null;
 let selectedTags = [];
 let tagMode = 'and';
-let selectedGenres = [];
-let genreMode = 'and';
 
 const els = {
   signin: document.getElementById('btn-signin'),
@@ -684,11 +668,6 @@ const els = {
   tagAdd: document.getElementById('tag-add'),
   modeAnd: document.getElementById('mode-and'),
   modeOr: document.getElementById('mode-or'),
-  genreBar: document.getElementById('genre-filter-bar'),
-  genreChips: document.getElementById('genre-chips'),
-  genreAdd: document.getElementById('genre-add'),
-  genreModeAnd: document.getElementById('genre-mode-and'),
-  genreModeOr: document.getElementById('genre-mode-or'),
   countLine: document.getElementById('count-line'),
   table: document.getElementById('grid-table'),
   tbody: document.getElementById('grid-body'),
@@ -705,6 +684,39 @@ const els = {
   importBtn: document.getElementById('import-btn'),
   importResult: document.getElementById('import-result'),
 };
+
+// Formes canoniques pour les doublons Genre/Tags historiques (fusion)
+const CANONICAL_TAG_MAP = {
+  "bl": "Yaoi/BL",
+  "modern": "Modern Day",
+  "showbiz": "Showbiz/Entertainment Industry",
+  "regression": "Regression/Returnee",
+};
+
+function canonicalizeTag(t){
+  const key = t.trim().toLowerCase();
+  return CANONICAL_TAG_MAP[key] || t.trim();
+}
+
+// Fusionne une chaîne "genre" et une chaîne "tags" (format CSV "a, b, c") en une
+// liste unique, dédupliquée (insensible à la casse) et avec formes canoniques.
+function mergeGenreTags(genreStr, tagsStr){
+  const raw = [
+    ...String(genreStr||"").split(",").map(s=>s.trim()).filter(Boolean),
+    ...String(tagsStr||"").split(",").map(s=>s.trim()).filter(Boolean),
+  ];
+  const seen = new Set();
+  const result = [];
+  raw.forEach(t => {
+    const canon = canonicalizeTag(t);
+    const key = canon.toLowerCase();
+    if(!seen.has(key)){
+      seen.add(key);
+      result.push(canon);
+    }
+  });
+  return result;
+}
 
 function setStatus(msg, isError){
   els.status.textContent = msg || "";
@@ -793,9 +805,7 @@ async function loadData(){
         Commentaire: r[7]||"",
         DateAjout: r[8]||"",
         DateMaj: r[9]||"",
-        Genre: r[10]||"",
-        GenreList: (r[10]||"").split(",").map(g=>g.trim()).filter(Boolean),
-        Tags: (r[11]||"").split(",").map(t=>t.trim()).filter(Boolean),
+        Tags: mergeGenreTags(r[10], r[11]),
         Origine: r[12]||"",
         Resume: r[13]||"",
       });
@@ -821,14 +831,6 @@ function buildTagOptions(){
   els.filterOrigine.innerHTML = '<option value="">Toutes origines</option>' +
     sortedOrigines.map(o => `<option value="${escapeAttr(o)}">${escapeHtml(o)}</option>`).join('');
 
-  const genres = new Set();
-  rows.forEach(r => r.GenreList.forEach(g => genres.add(g)));
-  const sortedGenres = Array.from(genres).sort((a,b)=>a.localeCompare(b));
-  els.genreAdd.innerHTML = '<option value="">+ ajouter un genre</option>' +
-    sortedGenres.map(g => `<option value="${escapeAttr(g)}">${escapeHtml(g)}</option>`).join('');
-
-  const genreDatalist = document.getElementById('genre-datalist');
-  if(genreDatalist) genreDatalist.innerHTML = sortedGenres.map(g => `<option value="${escapeAttr(g)}">`).join('');
   const tagsDatalist = document.getElementById('tags-datalist');
   if(tagsDatalist) tagsDatalist.innerHTML = sorted.map(t => `<option value="${escapeAttr(t)}">`).join('');
   const origineDatalist = document.getElementById('origine-datalist');
@@ -848,43 +850,6 @@ function renderTagChips(){
     });
   });
 }
-
-function renderGenreChips(){
-  els.genreChips.innerHTML = selectedGenres.map(g => `
-    <span class="tag-chip" data-genre="${escapeAttr(g)}">${escapeHtml(g)} <span class="x">×</span></span>
-  `).join('');
-  els.genreChips.querySelectorAll('.tag-chip .x').forEach(x => {
-    x.addEventListener('click', () => {
-      const genre = x.parentElement.dataset.genre;
-      selectedGenres = selectedGenres.filter(g => g !== genre);
-      renderGenreChips();
-      render();
-    });
-  });
-}
-
-els.genreAdd.addEventListener('change', () => {
-  const val = els.genreAdd.value;
-  if(val && !selectedGenres.includes(val)){
-    selectedGenres.push(val);
-    renderGenreChips();
-    render();
-  }
-  els.genreAdd.value = "";
-});
-
-els.genreModeAnd.addEventListener('click', () => {
-  genreMode = 'and';
-  els.genreModeAnd.classList.add('active');
-  els.genreModeOr.classList.remove('active');
-  render();
-});
-els.genreModeOr.addEventListener('click', () => {
-  genreMode = 'or';
-  els.genreModeOr.classList.add('active');
-  els.genreModeAnd.classList.remove('active');
-  render();
-});
 
 function activateTag(tag){
   if(!selectedTags.includes(tag)){
@@ -931,13 +896,6 @@ function render(){
     if(q && !r.Titre.toLowerCase().includes(q)) return false;
     if(st && r.Statut !== st) return false;
     if(origine && r.Origine !== origine) return false;
-    if(selectedGenres.length){
-      if(genreMode === 'and'){
-        if(!selectedGenres.every(g => r.GenreList.includes(g))) return false;
-      }else{
-        if(!selectedGenres.some(g => r.GenreList.includes(g))) return false;
-      }
-    }
     if(favOnly && !r.Favori) return false;
     if(minNote && (r.Note||0) < minNote) return false;
     if(selectedTags.length){
@@ -1154,58 +1112,6 @@ function buildDetailRow(r){
   origineRow.appendChild(origineInput);
   inner.appendChild(origineRow);
 
-  // ----- Genre (édition, multi-valeurs) -----
-  const genreRow = document.createElement('div');
-  genreRow.className = 'edit-field';
-  const genreLabel = document.createElement('span');
-  genreLabel.className = 'edit-field-label';
-  genreLabel.textContent = 'Genre';
-  genreRow.appendChild(genreLabel);
-  const genreWrap = document.createElement('div');
-  genreWrap.className = 'editable-tags';
-  function renderGenreEditor(){
-    genreWrap.innerHTML = '';
-    r.GenreList.forEach(g => {
-      const pill = document.createElement('span');
-      pill.className = 'tag-pill-outline';
-      pill.innerHTML = `${escapeHtml(g)} <span class="tag-x">×</span>`;
-      pill.querySelector('.tag-x').addEventListener('click', (e) => {
-        e.stopPropagation();
-        r.GenreList = r.GenreList.filter(x => x !== g);
-        r.Genre = r.GenreList.join(", ");
-        renderGenreEditor();
-        saveRow(r);
-        buildTagOptions();
-      });
-      genreWrap.appendChild(pill);
-    });
-    const addInput = document.createElement('input');
-    addInput.type = 'text';
-    addInput.className = 'inline-add-input';
-    addInput.setAttribute('list', 'genre-datalist');
-    addInput.placeholder = '+ genre';
-    addInput.addEventListener('click', e => e.stopPropagation());
-    addInput.addEventListener('keydown', (e) => {
-      if(e.key === 'Enter'){
-        e.preventDefault();
-        const val = addInput.value.trim();
-        if(val && !r.GenreList.includes(val)){
-          r.GenreList.push(val);
-          r.Genre = r.GenreList.join(", ");
-          renderGenreEditor();
-          saveRow(r);
-          buildTagOptions();
-        } else {
-          addInput.value = "";
-        }
-      }
-    });
-    genreWrap.appendChild(addInput);
-  }
-  renderGenreEditor();
-  genreRow.appendChild(genreWrap);
-  inner.appendChild(genreRow);
-
   if(r.Resume){
     const p = document.createElement('p');
     p.className = 'detail-resume';
@@ -1279,7 +1185,7 @@ async function saveRow(r){
   const rowValues = [
     r.Titre, r.Lien, r.Statut, r.Favori ? "Oui" : "Non",
     r.ChapitreActuel, r.DernierChapitre, r.Note || "", r.Commentaire,
-    r.DateAjout, r.DateMaj, r.Genre, r.Tags.join(", "), r.Origine, r.Resume
+    r.DateAjout, r.DateMaj, "", r.Tags.join(", "), r.Origine, r.Resume
   ];
   const range = `${resolvedSheetName}!A${r.rowIndex}:N${r.rowIndex}`;
   const url = `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(range)}?valueInputOption=USER_ENTERED`;
@@ -1405,8 +1311,15 @@ async function runImport(csvRows){
       if(mappedStatut && mappedStatut !== existing.Statut){ existing.Statut = mappedStatut; changed = true; }
       if(c.chapitre_actuel && c.chapitre_actuel !== existing.ChapitreActuel){ existing.ChapitreActuel = c.chapitre_actuel; changed = true; }
       if(c.dernier_connu && c.dernier_connu !== existing.DernierChapitre){ existing.DernierChapitre = c.dernier_connu; changed = true; }
-      if(!existing.Genre && c.genre){ existing.Genre = c.genre; existing.GenreList = c.genre.split(",").map(g=>g.trim()).filter(Boolean); changed = true; }
-      if((!existing.Tags || !existing.Tags.length) && c.tags){ existing.Tags = c.tags.split(",").map(t=>t.trim()).filter(Boolean); changed = true; }
+      // Champ fusionné Genre+Tags : on n'écrase que si le CSV apporte une valeur
+      // non-vide sur genre OU tags (jamais de vidage). Les imports NovelUpdates
+      // classiques n'ont pas ces colonnes donc ne touchent jamais à ce champ.
+      if(c.genre || c.tags){
+        const mergedTags = mergeGenreTags(c.genre, c.tags);
+        const newKey = mergedTags.map(t=>t.toLowerCase()).sort().join("|");
+        const oldKey = existing.Tags.map(t=>t.toLowerCase()).sort().join("|");
+        if(newKey !== oldKey){ existing.Tags = mergedTags; changed = true; }
+      }
       if(!existing.Origine && c.origine){ existing.Origine = c.origine; changed = true; }
       if(!existing.Resume && c.resume){ existing.Resume = c.resume; changed = true; }
 
@@ -1415,7 +1328,7 @@ async function runImport(csvRows){
         const rowValues = [
           existing.Titre, existing.Lien, existing.Statut, existing.Favori ? "Oui" : "Non",
           existing.ChapitreActuel, existing.DernierChapitre, existing.Note || "", existing.Commentaire,
-          existing.DateAjout, existing.DateMaj, existing.Genre, existing.Tags.join(", "), existing.Origine, existing.Resume
+          existing.DateAjout, existing.DateMaj, "", existing.Tags.join(", "), existing.Origine, existing.Resume
         ];
         const range = `${resolvedSheetName}!A${existing.rowIndex}:N${existing.rowIndex}`;
         updatePayload.push({ range, values: [rowValues] });
@@ -1424,10 +1337,11 @@ async function runImport(csvRows){
         unchangedCount++;
       }
     } else {
+      const mergedTags = mergeGenreTags(c.genre, c.tags);
       appendRows.push([
         c.titre, lien, mappedStatut, "Non",
         c.chapitre_actuel || "", c.dernier_connu || "", "", "",
-        today, today, c.genre || "", c.tags || "", c.origine || "", c.resume || ""
+        today, today, "", mergedTags.join(", "), c.origine || "", c.resume || ""
       ]);
       addedCount++;
     }
