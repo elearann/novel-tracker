@@ -877,7 +877,7 @@ async function loadData(){
   try{
     const sheetName = await resolveSheetName();
     const range = `${sheetName}!A1:N`;
-    const url = `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(range)}?valueRenderOption=UNFORMATTED_VALUE`;
+    const url = `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(range)}`;
     const data = await apiFetch(url);
     const values = data.values || [];
     rows = [];
@@ -892,7 +892,7 @@ async function loadData(){
         Favori: (r[3]||"").trim().toLowerCase()==="oui",
         ChapitreActuel: r[4]||"",
         DernierChapitre: r[5]||"",
-        Note: parseFloat(r[6]) || 0,
+        Note: parseFloat(String(r[6]||"").replace(",", ".")) || 0,
         Commentaire: r[7]||"",
         DateAjout: r[8]||"",
         DateMaj: r[9]||"",
