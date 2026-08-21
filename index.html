@@ -19,6 +19,8 @@
     --accent-soft: #e4ede9;
     --star: #b8862f;
     --danger: #a34a3a;
+    --epub-on: #3f9a5f;
+    --epub-off: var(--line);
   }
   html, body{
     max-width: 100%;
@@ -465,6 +467,12 @@
     color: var(--ink-faint);
     margin-left:5px;
   }
+  .fav-col{
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    gap:5px;
+  }
   .fav-btn{
     background:none;
     border:none;
@@ -472,8 +480,22 @@
     font-size:1rem;
     color: var(--line);
     padding:0;
+    line-height:1;
   }
   .fav-btn.on{ color: var(--star); }
+  .epub-dot{
+    width:9px;
+    height:9px;
+    border-radius:50%;
+    background: var(--epub-off);
+    border:none;
+    padding:0;
+    cursor:pointer;
+    display:block;
+    flex-shrink:0;
+  }
+  .epub-dot.on{ background: var(--epub-on); }
+  .epub-dot:hover{ opacity:0.8; }
   textarea.comment{
     width: 100%;
     min-height: 52px;
@@ -671,6 +693,11 @@
             <option value="">Toutes origines</option>
           </select>
           <label class="fav-toggle"><input type="checkbox" id="filter-fav"> Favoris seulement</label>
+          <select id="filter-epub">
+            <option value="">Epub : tous</option>
+            <option value="oui">Epub présent</option>
+            <option value="non">Epub absent</option>
+          </select>
           <select id="filter-note">
             <option value="0">Toutes les notes</option>
             <option value="5">5 seulement</option>
@@ -753,6 +780,7 @@ const els = {
   filterStatus: document.getElementById('filter-status'),
   filterOrigine: document.getElementById('filter-origine'),
   filterFav: document.getElementById('filter-fav'),
+  filterEpub: document.getElementById('filter-epub'),
   filterNote: document.getElementById('filter-note'),
   sortBy: document.getElementById('sort-by'),
   globalSaved: document.getElementById('global-saved'),
@@ -774,13 +802,10 @@ function canonicalizeTag(t){
   return CANONICAL_TAG_MAP[key] || t.trim();
 }
 
-// Fusionne une chaîne "genre" et une chaîne "tags" (format CSV "a, b, c") en une
-// liste unique, dédupliquée (insensible à la casse) et avec formes canoniques.
-function mergeGenreTags(genreStr, tagsStr){
-  const raw = [
-    ...String(genreStr||"").split(",").map(s=>s.trim()).filter(Boolean),
-    ...String(tagsStr||"").split(",").map(s=>s.trim()).filter(Boolean),
-  ];
+// Parse la chaîne "tags" (format CSV "a, b, c") en liste unique, dédupliquée
+// (insensible à la casse) et avec formes canoniques.
+function parseTags(tagsStr){
+  const raw = String(tagsStr||"").split(",").map(s=>s.trim()).filter(Boolean);
   const seen = new Set();
   const result = [];
   raw.forEach(t => {
@@ -792,6 +817,14 @@ function mergeGenreTags(genreStr, tagsStr){
     }
   });
   return result;
+}
+
+// Interprète une valeur CSV de type "oui/non" pour Epub. Retourne null si la
+// cellule est vide (= pas d'info fournie, on ne touche pas à la valeur existante).
+function parseEpubValue(raw){
+  const v = String(raw||"").trim().toLowerCase();
+  if(!v) return null;
+  return ["oui","yes","true","1","x","o","y"].includes(v) ? "Oui" : "Non";
 }
 
 function setStatus(msg, isError){
@@ -913,8 +946,8 @@ async function loadData(){
         Commentaire: r[7]||"",
         DateAjout: r[8]||"",
         DateMaj: r[9]||"",
-        GenreRaw: r[10]||"",
-        Tags: mergeGenreTags(r[10], r[11]),
+        EpubPresent: (r[10]||"").trim().toLowerCase()==="oui",
+        Tags: parseTags(r[11]),
         Origine: r[12]||"",
         Resume: r[13]||"",
       });
@@ -999,6 +1032,7 @@ function render(){
   const st = els.filterStatus.value;
   const origine = els.filterOrigine.value;
   const favOnly = els.filterFav.checked;
+  const epubFilter = els.filterEpub.value;
   const minNote = parseFloat(els.filterNote.value) || 0;
   const sortMode = els.sortBy.value;
 
@@ -1007,6 +1041,8 @@ function render(){
     if(st && r.Statut !== st) return false;
     if(origine && r.Origine !== origine) return false;
     if(favOnly && !r.Favori) return false;
+    if(epubFilter === 'oui' && !r.EpubPresent) return false;
+    if(epubFilter === 'non' && r.EpubPresent) return false;
     if(minNote && (r.Note||0) < minNote) return false;
     if(selectedTags.length){
       if(tagMode === 'and'){
@@ -1069,7 +1105,8 @@ function buildRow(r){
   tr.setAttribute('data-row-index', r.rowIndex);
 
   const favTd = document.createElement('td');
-  favTd.setAttribute('data-label', 'Favori');
+  const favCol = document.createElement('div');
+  favCol.className = 'fav-col';
   const favBtn = document.createElement('button');
   favBtn.className = 'fav-btn' + (r.Favori ? ' on' : '');
   favBtn.textContent = '★';
@@ -1080,7 +1117,19 @@ function buildRow(r){
     favBtn.classList.toggle('on', r.Favori);
     saveRow(r);
   });
-  favTd.appendChild(favBtn);
+  favCol.appendChild(favBtn);
+  const epubBtn = document.createElement('button');
+  epubBtn.className = 'epub-dot' + (r.EpubPresent ? ' on' : '');
+  epubBtn.title = r.EpubPresent ? 'Epub présent' : 'Epub absent';
+  epubBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    r.EpubPresent = !r.EpubPresent;
+    epubBtn.classList.toggle('on', r.EpubPresent);
+    epubBtn.title = r.EpubPresent ? 'Epub présent' : 'Epub absent';
+    saveRow(r);
+  });
+  favCol.appendChild(epubBtn);
+  favTd.appendChild(favCol);
   tr.appendChild(favTd);
 
   const titleTd = document.createElement('td');
@@ -1325,7 +1374,7 @@ async function saveRow(r){
   const rowValues = [
     r.Titre, r.Lien, r.Statut, r.Favori ? "Oui" : "Non",
     r.ChapitreActuel, r.DernierChapitre, r.Note || "", r.Commentaire,
-    r.DateAjout, r.DateMaj, "", r.Tags.join(", "), r.Origine, r.Resume
+    r.DateAjout, r.DateMaj, r.EpubPresent ? "Oui" : "Non", r.Tags.join(", "), r.Origine, r.Resume
   ];
   const range = `${resolvedSheetName}!A${r.rowIndex}:N${r.rowIndex}`;
   const url = `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/${encodeURIComponent(range)}?valueInputOption=USER_ENTERED`;
@@ -1371,6 +1420,7 @@ els.searchClear.addEventListener('click', () => {
 els.filterStatus.addEventListener('change', render);
 els.filterOrigine.addEventListener('change', render);
 els.filterFav.addEventListener('change', render);
+els.filterEpub.addEventListener('change', render);
 els.filterNote.addEventListener('change', render);
 els.sortBy.addEventListener('change', render);
 
@@ -1463,18 +1513,23 @@ async function runImport(csvRows){
       if(mappedStatut && mappedStatut !== existing.Statut){ existing.Statut = mappedStatut; changed = true; }
       if(c.chapitre_actuel && c.chapitre_actuel !== existing.ChapitreActuel){ existing.ChapitreActuel = c.chapitre_actuel; changed = true; }
       if(c.dernier_connu && c.dernier_connu !== existing.DernierChapitre){ existing.DernierChapitre = c.dernier_connu; changed = true; }
-      // Champ fusionné Genre+Tags : on n'écrase que si le CSV apporte une valeur
-      // non-vide sur genre OU tags (jamais de vidage). Les imports NovelUpdates
-      // classiques n'ont pas ces colonnes donc ne touchent jamais à ce champ.
-      if(c.genre || c.tags){
-        const mergedTags = mergeGenreTags(c.genre, c.tags);
-        const newKey = mergedTags.map(t=>t.toLowerCase()).sort().join("|");
+      // Tags : on n'écrase que si le CSV apporte une valeur non-vide (jamais de
+      // vidage). Les imports NovelUpdates classiques n'ont pas cette colonne
+      // donc ne touchent jamais ce champ.
+      if(c.tags){
+        const newTags = parseTags(c.tags);
+        const newKey = newTags.map(t=>t.toLowerCase()).sort().join("|");
         const oldKey = existing.Tags.map(t=>t.toLowerCase()).sort().join("|");
-        if(newKey !== oldKey || existing.GenreRaw){
-          existing.Tags = mergedTags;
-          existing.GenreRaw = "";
+        if(newKey !== oldKey){
+          existing.Tags = newTags;
           changed = true;
         }
+      }
+      // Epub : idem, on ne touche à la coche que si le CSV apporte une info.
+      const epubVal = parseEpubValue(c.epub);
+      if(epubVal !== null){
+        const newEpub = epubVal === "Oui";
+        if(newEpub !== existing.EpubPresent){ existing.EpubPresent = newEpub; changed = true; }
       }
       if(!existing.Origine && c.origine){ existing.Origine = c.origine; changed = true; }
       if(!existing.Resume && c.resume){ existing.Resume = c.resume; changed = true; }
@@ -1485,7 +1540,7 @@ async function runImport(csvRows){
         const rowValues = [
           existing.Titre, existing.Lien, existing.Statut, existing.Favori ? "Oui" : "Non",
           existing.ChapitreActuel, existing.DernierChapitre, existing.Note || "", existing.Commentaire,
-          existing.DateAjout, existing.DateMaj, "", existing.Tags.join(", "), existing.Origine, existing.Resume
+          existing.DateAjout, existing.DateMaj, existing.EpubPresent ? "Oui" : "Non", existing.Tags.join(", "), existing.Origine, existing.Resume
         ];
         const range = `${resolvedSheetName}!A${existing.rowIndex}:N${existing.rowIndex}`;
         updatePayload.push({ range, values: [rowValues] });
@@ -1494,11 +1549,12 @@ async function runImport(csvRows){
         unchangedCount++;
       }
     } else {
-      const mergedTags = mergeGenreTags(c.genre, c.tags);
+      const newTags = parseTags(c.tags);
+      const newEpub = parseEpubValue(c.epub) === "Oui";
       appendRows.push([
         c.titre, lien, mappedStatut, "Non",
         c.chapitre_actuel || "", c.dernier_connu || "", "", c.commentaire || "",
-        today, today, "", mergedTags.join(", "), c.origine || "", c.resume || ""
+        today, today, newEpub ? "Oui" : "Non", newTags.join(", "), c.origine || "", c.resume || ""
       ]);
       addedCount++;
     }
