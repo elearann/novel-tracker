@@ -1436,9 +1436,12 @@ const STATUT_MAP = {
   "termine - a suivre": "À jour",
 };
 
+// Retourne null si aucune info de statut n'est fournie dans le CSV (on ne touche
+// pas au statut existant), sinon le statut mappé/brut.
 function mapStatut(raw){
   const key = (raw||"").trim().toLowerCase();
-  return STATUT_MAP[key] || raw || "À lire";
+  if(!key) return null;
+  return STATUT_MAP[key] || raw;
 }
 
 function parseCSV(text){
@@ -1552,7 +1555,7 @@ async function runImport(csvRows){
       const newTags = parseTags(c.tags);
       const newEpub = parseEpubValue(c.epub) === "Oui";
       appendRows.push([
-        c.titre, lien, mappedStatut, "Non",
+        c.titre, lien, mappedStatut || "À lire", "Non",
         c.chapitre_actuel || "", c.dernier_connu || "", "", c.commentaire || "",
         today, today, newEpub ? "Oui" : "Non", newTags.join(", "), c.origine || "", c.resume || ""
       ]);
