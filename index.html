@@ -342,6 +342,7 @@
     -webkit-line-clamp:2;
     -webkit-box-orient:vertical;
     overflow:hidden;
+    cursor:pointer;
   }
   td.chap-cell input{
     width:100%;
@@ -832,7 +833,8 @@ function setStatus(msg, isError){
   els.status.classList.toggle('error', !!isError);
 }
 
-function showSaved(){
+function showSaved(msg){
+  els.globalSaved.textContent = msg || '✓ enregistré';
   els.globalSaved.classList.add('show');
   clearTimeout(showSaved._t);
   showSaved._t = setTimeout(()=> els.globalSaved.classList.remove('show'), 1400);
@@ -1137,6 +1139,15 @@ function buildRow(r){
   const titleSpan = document.createElement('span');
   titleSpan.className = 'title-clamp';
   titleSpan.textContent = r.Titre;
+  titleSpan.title = 'Cliquer pour copier le titre';
+  titleSpan.addEventListener('click', (e) => {
+    e.stopPropagation();
+    navigator.clipboard.writeText(r.Titre).then(() => {
+      showSaved('✓ titre copié');
+    }).catch(() => {
+      showSaved('✕ échec copie');
+    });
+  });
   titleTd.appendChild(titleSpan);
   tr.appendChild(titleTd);
 
